@@ -1,11 +1,6 @@
-from langchain.agents import Tool, AgentExecutor
-from langchain.agents.format_scratchpad import format_to_openai_function_messages
-from langchain.agents.output_parsers import OpenAIFunctionsAgentOutputParser
+from langchain.agents import Tool
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
-from langchain.memory import ConversationBufferMemory
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import os
 from dotenv import load_dotenv
 from typing import Dict, Any, List
@@ -32,10 +27,12 @@ class ManagerAgent:
     def __init__(self, db: Session, manager_id: int):
         self.db = db
         self.manager_id = manager_id
-        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-        self.agent_executor = self._create_agent()
+        self.memory = []  # Simple list to store conversation history
+        self.tools = self._create_tools()
+        print(f"ManagerAgent initialized for manager {manager_id}")
 
-    def _create_agent(self) -> AgentExecutor:
+    def _create_tools(self):
+        """Create the tools for the agent"""
         tools = [
             Tool(
                 name="get_all_active_trips",
@@ -78,134 +75,107 @@ class ManagerAgent:
                 description="Create a new trip assignment. Required parameters: pickup_address, delivery_address, cargo_description. Optional parameters: driver_id, shipper_id, consignee_id. ALWAYS use this tool when asked to create a new trip or shipment."
             )
         ]
-
-        # Use a compatible approach for LangChain 0.0.335
-        from langchain.chains.conversation.memory import ConversationBufferMemory
-        from langchain.agents import Tool, AgentExecutor, LLMSingleActionAgent
-        from langchain.prompts import StringPromptTemplate
-        from langchain.llms import BaseLLM
-        from langchain.chains import LLMChain
-        from typing import List, Union, Callable, Dict, Any, Optional
-        import re
-        
-        template = """You are an AI assistant for logistics managers using a logistics management system. Your job is to help managers monitor trips, resolve issues, and communicate with drivers.
-
-IMPORTANT: When a user asks you to perform an action like creating a trip, checking trip details, or resolving an issue, you MUST use the appropriate tool from your toolset. DO NOT generate fictional responses or make up information.
-
-Specifically:
-1. When asked to create a new trip, ALWAYS use the 'create_new_trip' tool with the required parameters.
-2. When asked about trip details, ALWAYS use the 'get_trip_details' tool.
-3. When asked about trip history, ALWAYS use the appropriate history tool.
-4. Never reference trips that don't exist in the database.
-5. Always confirm actions you've taken using the tools.
-
-TOOLS:
-------
-You have access to the following tools:
-
-{tools}
-
-To use a tool, please use the following format:
-```
-Thought: Do I need to use a tool? Yes
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-```
-
-When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
-```
-Thought: Do I need to use a tool? No
-Final Answer: [your response here]
-```
-
-Begin!
-
-Previous conversation history:
-{history}
-
-New human question: {input}
-{agent_scratchpad}"""
-
-        # Set up a prompt template
-        class CustomPromptTemplate(StringPromptTemplate):
-            # The template to use
-            template: str
-            # The list of tools available
-            tools: List[Tool]
-            
-            def format(self, **kwargs) -> str:
-                # Get the intermediate steps (AgentAction, Observation tuples)
-                # Format them in a particular way
-                intermediate_steps = kwargs.pop("intermediate_steps")
-                thoughts = ""
-                for action, observation in intermediate_steps:
-                    thoughts += action.log
-                    thoughts += f"\nObservation: {observation}\nThought: "
-                # Set the agent_scratchpad variable to that value
-                kwargs["agent_scratchpad"] = thoughts
-                # Create a tools variable from the list of tools provided
-                kwargs["tools"] = "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
-                # Create a list of tool names for the tools provided
-                kwargs["tool_names"] = ", ".join([tool.name for tool in self.tools])
-                return self.template.format(**kwargs)
-        
-        prompt = CustomPromptTemplate(
-            template=template,
-            tools=tools,
-            # This omits the `agent_scratchpad`, `tools`, and `tool_names` variables because those are generated dynamically
-            input_variables=["input", "intermediate_steps", "history"]
-        )
-        
-        class CustomOutputParser:
-            def parse(self, llm_output: str) -> Union[Dict[str, str], Dict[str, Any]]:
-                # Check if there is a "Final Answer:" in the LLM output
-                if "Final Answer:" in llm_output:
-                    return {"output": llm_output.split("Final Answer:")[-1].strip()}
-                
-                # Parse out the action and action input
-                regex = r"Action: (.*?)[\n]*Action Input:[\s]*(.*)"
-                match = re.search(regex, llm_output, re.DOTALL)
-                
-                if not match:
-                    return {"output": llm_output}
-                
-                action = match.group(1).strip()
-                action_input = match.group(2).strip()
-                
-                return {"action": action, "action_input": action_input}
-        
-        output_parser = CustomOutputParser()
-        
-        # LLM chain consisting of the LLM and a prompt
-        llm_chain = LLMChain(llm=llm, prompt=prompt)
-        
-        tool_names = [tool.name for tool in tools]
-        agent = LLMSingleActionAgent(
-            llm_chain=llm_chain, 
-            output_parser=output_parser,
-            stop=["\nObservation:"], 
-            allowed_tools=tool_names
-        )
-        
-        return AgentExecutor.from_agent_and_tools(
-            agent=agent,
-            tools=tools,
-            verbose=True,
-            memory=self.memory
-        )
+        print(f"Created tools: {[tool.name for tool in tools]}")
+        return tools
 
     def process_message(self, message: str) -> str:
         """Process a message from the manager and return a response"""
-        # Check if the message is asking about a specific trip ID that doesn't exist
-        trip_id_match = re.search(r'trip\s+#?(\d+)', message.lower())
-        if trip_id_match:
-            trip_id = int(trip_id_match.group(1))
-            if not self._trip_exists(trip_id):
-                return f"Trip #{trip_id} does not exist in the database. Please check the trip ID or create a new trip."
-        
-        response = self.agent_executor.invoke({"input": message})
-        return response["output"]
+        try:
+            # Check if the message is asking about a specific trip ID that doesn't exist
+            trip_id_match = re.search(r'trip\s+#?(\d+)', message.lower())
+            if trip_id_match:
+                trip_id = int(trip_id_match.group(1))
+                if not self._trip_exists(trip_id):
+                    return f"Trip #{trip_id} does not exist in the database. Please check the trip ID or create a new trip."
+            
+            # Add user message to memory
+            self.memory.append({"role": "user", "content": message})
+            
+            # Create the system message with tool descriptions
+            tools_str = "\n".join([f"- {tool.name}: {tool.description}" for tool in self.tools])
+            system_message = f"""You are an AI assistant for logistics managers using a logistics management system.
+            Your job is to help managers monitor trips, resolve issues, and communicate with drivers.
+            
+            IMPORTANT: When a user asks you to perform an action like creating a trip, checking trip details, or resolving an issue, you MUST use the appropriate tool from your toolset. DO NOT generate fictional responses or make up information.
+            
+            You have access to the following tools:
+            {tools_str}
+            
+            When a manager asks you to perform an action, use the appropriate tool.
+            If you need to use a tool, respond with the tool name and the parameters in this format:
+            
+            Tool: <tool_name>
+            Parameters: <parameter1>=<value1>, <parameter2>=<value2>, ...
+            
+            For example:
+            Tool: get_trip_details
+            Parameters: trip_id=123
+            
+            If you don't need to use a tool, just respond normally."""
+            
+            # Prepare messages for the LLM
+            messages = [
+                {"role": "system", "content": system_message}
+            ]
+            
+            # Add conversation history (limited to last 10 messages)
+            for msg in self.memory[-10:]:
+                messages.append(msg)
+            
+            # Get response from LLM
+            print(f"Sending message to LLM: {message}")
+            response = llm.invoke(messages)
+            response_content = response.content
+            print(f"LLM response: {response_content}")
+            
+            # Add assistant response to memory
+            self.memory.append({"role": "assistant", "content": response_content})
+            
+            # Check if the response contains a tool call
+            if "Tool:" in response_content:
+                print("Tool call detected in response")
+                # Extract tool name and parameters
+                lines = response_content.strip().split("\n")
+                tool_line = next((line for line in lines if line.startswith("Tool:")), None)
+                params_line = next((line for line in lines if line.startswith("Parameters:")), None)
+                
+                if tool_line and params_line:
+                    tool_name = tool_line.replace("Tool:", "").strip()
+                    params_str = params_line.replace("Parameters:", "").strip()
+                    
+                    print(f"Extracted tool: {tool_name}, params: {params_str}")
+                    
+                    # Parse parameters
+                    params = {}
+                    for param in params_str.split(","):
+                        if "=" in param:
+                            key, value = param.split("=", 1)
+                            params[key.strip()] = value.strip()
+                    
+                    # Find the tool
+                    tool = next((t for t in self.tools if t.name == tool_name), None)
+                    
+                    if tool:
+                        print(f"Executing tool: {tool_name} with params: {params}")
+                        # Execute the tool
+                        tool_result = tool.func(**params)
+                        
+                        # Add tool result to memory
+                        self.memory.append({"role": "system", "content": f"Tool result: {tool_result}"})
+                        
+                        # Return the result
+                        return tool_result
+                    else:
+                        print(f"Tool not found: {tool_name}")
+            
+            # If no tool call or tool execution failed, return the original response
+            return response_content
+            
+        except Exception as e:
+            print(f"Error processing message: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return f"I'm sorry, I encountered an error while processing your message. Please try again or contact support if the issue persists."
 
     def _trip_exists(self, trip_id: int) -> bool:
         """Check if a trip exists in the database"""
@@ -472,8 +442,10 @@ New human question: {input}
             active_trip_drivers = self.db.query(Trip.driver_id).filter(
                 Trip.status.in_([
                     TripStatus.ASSIGNED.value,
-                    TripStatus.IN_PROGRESS.value,
+                    TripStatus.AT_PICKUP.value,
                     TripStatus.LOADING.value,
+                    TripStatus.IN_TRANSIT.value,
+                    TripStatus.AT_DESTINATION.value,
                     TripStatus.UNLOADING.value
                 ])
             ).all()

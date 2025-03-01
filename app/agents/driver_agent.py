@@ -1,11 +1,8 @@
-from langchain.agents import AgentExecutor, Tool
-from langchain.agents.format_scratchpad import format_to_openai_function_messages
-from langchain.agents.output_parsers import OpenAIFunctionsAgentOutputParser
+from langchain.agents import Tool
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.memory import ConversationBufferMemory
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import os
 from dotenv import load_dotenv
 from typing import Dict, Any, List
@@ -30,10 +27,12 @@ class DriverAgent:
     def __init__(self, db: Session, driver_id: int):
         self.db = db
         self.driver_id = driver_id
-        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-        self.agent_executor = self._create_agent()
+        self.memory = []  # Simple list to store conversation history
+        self.tools = self._create_tools()
+        print(f"DriverAgent initialized for driver {driver_id}")
 
-    def _create_agent(self) -> AgentExecutor:
+    def _create_tools(self):
+        """Create the tools for the agent"""
         tools = [
             Tool(
                 name="get_current_trip",
@@ -61,33 +60,98 @@ class DriverAgent:
                 description="Get the history of trips for the driver"
             )
         ]
-
-        # Create a custom agent using the Groq model
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an AI assistant for truck drivers using a logistics management system. Your job is to help drivers manage their trips, update statuses, and report issues."),
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ])
-        
-        # Create the agent without binding tools directly
-        agent = (
-            {
-                "input": lambda x: x["input"],
-                "chat_history": lambda x: x.get("chat_history", []),
-                "agent_scratchpad": lambda x: format_to_openai_function_messages(x.get("intermediate_steps", [])),
-            }
-            | prompt
-            | llm
-            | OpenAIFunctionsAgentOutputParser()
-        )
-        
-        return AgentExecutor(agent=agent, tools=tools, memory=self.memory, verbose=True)
+        print(f"Created tools: {[tool.name for tool in tools]}")
+        return tools
 
     def process_message(self, message: str) -> str:
         """Process a message from the driver and return a response"""
-        response = self.agent_executor.invoke({"input": message})
-        return response["output"]
+        try:
+            # Add user message to memory
+            self.memory.append({"role": "user", "content": message})
+            
+            # Create the system message with tool descriptions
+            tools_str = "\n".join([f"- {tool.name}: {tool.description}" for tool in self.tools])
+            system_message = f"""You are an AI assistant for truck drivers using a logistics management system.
+            Your job is to help drivers manage their trips, update statuses, and report issues.
+            
+            You have access to the following tools:
+            {tools_str}
+            
+            When a driver asks you to perform an action, use the appropriate tool.
+            If you need to use a tool, respond with the tool name and the parameters in this format:
+            
+            Tool: <tool_name>
+            Parameters: <parameter1>=<value1>, <parameter2>=<value2>, ...
+            
+            For example:
+            Tool: update_trip_status
+            Parameters: status=at_pickup, notes=Just arrived at the pickup location
+            
+            If you don't need to use a tool, just respond normally."""
+            
+            # Prepare messages for the LLM
+            messages = [
+                {"role": "system", "content": system_message}
+            ]
+            
+            # Add conversation history (limited to last 10 messages)
+            for msg in self.memory[-10:]:
+                messages.append(msg)
+            
+            # Get response from LLM
+            print(f"Sending message to LLM: {message}")
+            response = llm.invoke(messages)
+            response_content = response.content
+            print(f"LLM response: {response_content}")
+            
+            # Add assistant response to memory
+            self.memory.append({"role": "assistant", "content": response_content})
+            
+            # Check if the response contains a tool call
+            if "Tool:" in response_content:
+                print("Tool call detected in response")
+                # Extract tool name and parameters
+                lines = response_content.strip().split("\n")
+                tool_line = next((line for line in lines if line.startswith("Tool:")), None)
+                params_line = next((line for line in lines if line.startswith("Parameters:")), None)
+                
+                if tool_line and params_line:
+                    tool_name = tool_line.replace("Tool:", "").strip()
+                    params_str = params_line.replace("Parameters:", "").strip()
+                    
+                    print(f"Extracted tool: {tool_name}, params: {params_str}")
+                    
+                    # Parse parameters
+                    params = {}
+                    for param in params_str.split(","):
+                        if "=" in param:
+                            key, value = param.split("=", 1)
+                            params[key.strip()] = value.strip()
+                    
+                    # Find the tool
+                    tool = next((t for t in self.tools if t.name == tool_name), None)
+                    
+                    if tool:
+                        print(f"Executing tool: {tool_name} with params: {params}")
+                        # Execute the tool
+                        tool_result = tool.func(**params)
+                        
+                        # Add tool result to memory
+                        self.memory.append({"role": "system", "content": f"Tool result: {tool_result}"})
+                        
+                        # Return the result
+                        return tool_result
+                    else:
+                        print(f"Tool not found: {tool_name}")
+            
+            # If no tool call or tool execution failed, return the original response
+            return response_content
+            
+        except Exception as e:
+            print(f"Error processing message: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return f"I'm sorry, I encountered an error while processing your message. Please try again or contact support if the issue persists."
 
     def _get_current_trip(self) -> str:
         """Get the current active trip for the driver"""
