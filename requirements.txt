@@ -1,0 +1,12 @@
+fastapi==0.104.1
+uvicorn==0.23.2
+python-dotenv==1.0.0
+python-telegram-bot==20.6
+langchain==0.0.335
+langchain-groq==0.0.1
+groq==0.4.1
+sqlalchemy==2.0.23
+pydantic==2.4.2
+pydantic-settings==2.0.3
+python-multipart==0.0.6
+httpx==0.25.1 
