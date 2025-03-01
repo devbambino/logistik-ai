@@ -1,7 +1,11 @@
-from langchain.agents import Tool, AgentExecutor, create_react_agent
+from langchain.agents import Tool, AgentExecutor
+from langchain.agents.format_scratchpad import format_to_openai_function_messages
+from langchain.agents.output_parsers import OpenAIFunctionsAgentOutputParser
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.memory import ConversationBufferMemory
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import os
 from dotenv import load_dotenv
 from typing import Dict, Any, List
@@ -69,25 +73,26 @@ class ShipperAgent:
             )
         ]
 
-        prompt = PromptTemplate.from_template(
-            """You are an AI assistant for shippers using a logistics management system.
-            Your job is to help shippers track their shipments, communicate with drivers and managers, and resolve issues.
-            
-            Chat History:
-            {chat_history}
-            
-            Human: {input}
-            
-            Think about how to best help the shipper. You have access to the following tools:
-            
-            {tools}
-            
-            Use the tools to provide accurate and helpful responses. If you don't know something, say so.
-            
-            AI: """
+        # Create a custom agent using the Groq model
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are an AI assistant for shippers using a logistics management system. Your job is to help shippers track their shipments, communicate with drivers and managers, and resolve issues."),
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
+        
+        # Create the agent without binding tools directly
+        agent = (
+            {
+                "input": lambda x: x["input"],
+                "chat_history": lambda x: x.get("chat_history", []),
+                "agent_scratchpad": lambda x: format_to_openai_function_messages(x.get("intermediate_steps", [])),
+            }
+            | prompt
+            | llm
+            | OpenAIFunctionsAgentOutputParser()
         )
-
-        agent = create_react_agent(llm, tools, prompt)
+        
         return AgentExecutor(agent=agent, tools=tools, memory=self.memory, verbose=True)
 
     def process_message(self, message: str) -> str:

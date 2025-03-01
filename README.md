@@ -37,6 +37,8 @@ An AI-powered logistics management system that uses Telegram for user interactio
    - Role-specific AI assistants powered by LangChain and Groq
    - Natural language understanding and generation
    - Context-aware responses with conversation memory
+   - Custom agent implementation using LCEL (LangChain Expression Language) pipeline pattern
+   - Direct integration with tools via AgentExecutor rather than binding tools to the LLM
 
 4. **Database Models**
    - Users (drivers, managers, shippers, consignees)
@@ -137,6 +139,20 @@ An AI-powered logistics management system that uses Telegram for user interactio
    ```
    python scripts/setup_ngrok.py
    ```
+
+## Implementation Notes
+
+### Agent Implementation
+
+The AI agents in this system are implemented using a custom approach with the Groq LLM model. Since the `bind_tools` method is not implemented for the Groq model in the current version of LangChain, we use a direct approach:
+
+1. We define tools as LangChain Tool objects with their respective functions
+2. We create a ChatPromptTemplate with system message, chat history, user input, and agent scratchpad
+3. We use the LCEL (LangChain Expression Language) pipeline pattern to connect components
+4. Instead of binding tools to the LLM, we pass them directly to the AgentExecutor
+5. The OpenAIFunctionsAgentOutputParser is used to parse the LLM output and extract tool calls
+
+This approach ensures compatibility with the Groq model while maintaining the agent's ability to use tools effectively.
 
 ## Project Structure
 

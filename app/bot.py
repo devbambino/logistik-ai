@@ -28,12 +28,14 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 user_sessions = {}
 
 # Quick reply keyboards
+logger.info("Creating driver keyboard")
 driver_keyboard = ReplyKeyboardMarkup([
     [KeyboardButton("At Pickup"), KeyboardButton("Loading"), KeyboardButton("Departed")],
     [KeyboardButton("On Schedule"), KeyboardButton("Slight Delay"), KeyboardButton("Major Delay")],
     [KeyboardButton("Arrived at Destination"), KeyboardButton("Unloading"), KeyboardButton("Completed Delivery")],
     [KeyboardButton("Report Issue"), KeyboardButton("Share Location"), KeyboardButton("Trip Details")]
 ], resize_keyboard=True)
+logger.info(f"Driver keyboard created: {driver_keyboard}")
 
 # Helper functions
 def get_db():
@@ -226,16 +228,26 @@ async def set_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     # Send a follow-up message with the appropriate keyboard
     if role == UserRole.DRIVER.value:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text="As a driver, you can use these quick reply buttons:",
-            reply_markup=driver_keyboard
-        )
+        logger.info(f"Sending driver keyboard to user {update.effective_user.id}")
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="As a driver, you can use these quick reply buttons:",
+                reply_markup=driver_keyboard
+            )
+            logger.info(f"Successfully sent driver keyboard to user {update.effective_user.id}")
+        except Exception as e:
+            logger.error(f"Error sending driver keyboard: {e}")
     else:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text=f"As a {role}, you can ask me questions about your shipments and I'll help you manage them."
-        )
+        logger.info(f"Sending regular message to {role} user {update.effective_user.id}")
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text=f"As a {role}, you can ask me questions about your shipments and I'll help you manage them."
+            )
+            logger.info(f"Successfully sent message to {role} user {update.effective_user.id}")
+        except Exception as e:
+            logger.error(f"Error sending message to {role} user: {e}")
 
 # Message handlers
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

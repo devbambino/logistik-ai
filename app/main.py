@@ -41,6 +41,8 @@ async def startup_event():
     """Set up the Telegram bot webhook on startup."""
     if WEBHOOK_URL and TELEGRAM_BOT_TOKEN:
         webhook_url = f"{WEBHOOK_URL}/webhook/{TELEGRAM_BOT_TOKEN}"
+        # Initialize the bot application
+        await bot_app.initialize()
         await bot_app.bot.set_webhook(url=webhook_url)
         print(f"Webhook set to {webhook_url}")
     else:
@@ -56,6 +58,13 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 async def process_update(data: dict):
     """Process Telegram update in the background."""
     update = Update.de_json(data=data, bot=bot_app.bot)
+    # Ensure the bot application is initialized
+    try:
+        # This will raise an exception if not initialized
+        bot_app._check_initialized()
+    except RuntimeError:
+        # Initialize if not already initialized
+        await bot_app.initialize()
     await bot_app.process_update(update)
 
 # API endpoints for Users
