@@ -116,9 +116,14 @@ An AI-powered logistics management system that uses Telegram for user interactio
 
 ### Running the Application
 
-1. Initialize the database (optional for test data):
+1. Initialize the database:
    ```
-   python scripts/init_db.py
+   python create_db.py  # Creates empty database tables
+   ```
+   
+   Or initialize with test data:
+   ```
+   python scripts/init_db.py  # Creates database tables and populates with test data
    ```
 
 2. Start the application:
@@ -173,8 +178,9 @@ logistik-ai/
 │   ├── schemas.py            # Pydantic schemas for validation
 │   └── utils.py              # Utility functions
 ├── scripts/                  # Helper scripts
-│   ├── init_db.py            # Database initialization
+│   ├── init_db.py            # Database initialization with test data
 │   └── setup_ngrok.py        # Ngrok webhook configuration
+├── create_db.py              # Database initialization script
 ├── .env.example              # Example environment variables
 ├── .gitignore                # Git ignore file
 ├── README.md                 # Project documentation
@@ -198,4 +204,4 @@ logistik-ai/
 
 ## Hackathon Project
 
-This project was created for a hackathon and is intended for demonstration purposes. In a production environment, you would want to implement additional security measures, more robust error handling, and potentially replace SQLite with a more scalable database solution like PostgreSQL. 
+This project was created for a hackathon and is intended for demonstration purposes. In a production environment, you would want to implement additional security measures, more robust error handling, and potentially replace SQLite with a more scalable database solution like PostgreSQL.
